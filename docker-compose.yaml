@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:17
+    container_name: ovation-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ovation
+      POSTGRES_PASSWORD: ovation_dev
+      POSTGRES_DB: ovation
+    ports:
+      - "15432:5432"
+    volumes:
+      - ovation_pgdata:/var/lib/postgresql/data
+
+volumes:
+  ovation_pgdata:

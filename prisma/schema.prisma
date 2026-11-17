@@ -1,0 +1,119 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// setting up the schema for the users, events, awards and payment modes
+
+/**
+ * WHAT KIND OF USER IS THIS?
+ * ADMINS -
+ * EDITOR -
+ * VIEWER -
+ */
+enum Role {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum PaymentMode {
+  CASH
+  TRANSFER
+  PLEDGE
+}
+
+enum DonationStatus {
+  PLEDGE
+  RECIEVED
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  name         String
+  role         Role       @default(EDITOR)
+  createdAt    DateTime   @default(now())
+  donations    Donation[]
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+model Event {
+  id        String     @id @default(uuid())
+  name      String
+  date      DateTime
+  closed    Boolean    @default(false)
+  createdAt DateTime   @default(now())
+  awardees  Awardee[]
+  donations Donation[]
+
+  @@map("events")
+}
+
+model Awardee {
+  id          String       @id @default(uuid())
+  eventId     String
+  event       Event        @relation(fields: [eventId], references: [id])
+  number      Int?
+  name        String
+  amountKobo  BigInt       @default(0)
+  paymentMode PaymentMode?
+  deletedAt   DateTime?
+  createdAt   DateTime     @default(now())
+  donations   Donation[]
+
+  @@index([eventId])
+  @@map("awardees")
+}
+
+model Donation {
+  id          String         @id
+  eventId     String
+  event       Event          @relation(fields: [eventId], references: [id])
+  awardeeId   String?
+  awardee     Awardee?       @relation(fields: [awardeeId], references: [id])
+  donorName   String
+  amountKobo  BigInt
+  paymentMode PaymentMode
+  status      DonationStatus @default(RECIEVED)
+  needsReview Boolean        @default(false)
+  note        String?
+  version     Int            @default(1)
+  createdById String
+  createdBy   User           @relation(fields: [createdById], references: [id])
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  deletedAt   DateTime?
+
+  @@index([eventId, awardeeId])
+  @@index([donorName])
+  @@map("donations")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@map("audit_log")
+}
