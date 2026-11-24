@@ -2,11 +2,29 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { DocumentBuilder, SwaggerModule, type OpenAPIObject } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module.js';
 import { ObserveInstrument } from './observe.js';
 import { setOpenApiDocument } from './modules/sdk/openapi-store.js';
+import { ErrorResponseDto } from './common/dto/error-response.dto.js';
+
+/**
+ * Every endpoint can fail (400, 401, 403, 404, 429...), always with the same body. Documenting it as
+ * each operation's `default` response lets the SDK type `error` on every call. Explicitly
+ * documented error statuses (for example 401 on login) keep their own description.
+ */
+function addDefaultErrorResponses(document: OpenAPIObject) {
+  const ref = { $ref: `#/components/schemas/${ErrorResponseDto.name}` };
+  for (const item of Object.values(document.paths)) {
+    for (const method of ['get', 'post', 'put', 'patch', 'delete'] as const) {
+      const op = item[method];
+      if (op && !op.responses.default) {
+        op.responses.default = { description: 'Error', content: { 'application/json': { schema: ref } } };
+      }
+    }
+  }
+}
 
 // JSON can't carry BigInt: send kobo amounts as digit strings.
 (BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function (this: bigint) {
@@ -35,7 +53,9 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(
     app,
     new DocumentBuilder().setTitle('Ovation API').setVersion('0.2.0').addBearerAuth().build(),
+    { extraModels: [ErrorResponseDto] },
   );
+  addDefaultErrorResponses(document);
   // The document is always built (the SDK download uses it); the public docs pages can be switched off.
   if (config.get<string>('DOCS_ENABLED') !== 'false') {
     SwaggerModule.setup('api/docs', app, document, { jsonDocumentUrl: 'api/openapi.json' });

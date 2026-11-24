@@ -1,8 +1,9 @@
 import { Body, Controller, Get, HttpCode, Patch, Post } from "@nestjs/common";
 import {
     ApiBearerAuth, ApiConflictResponse, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse,
-    ApiTags, ApiTooManyRequestsResponse,
+    ApiTags, ApiTooManyRequestsResponse, ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
+import { ErrorResponseDto } from "../../common/dto/error-response.dto.js";
 import { AuthService } from "./auth.service.js";
 import { Public } from "../../common/decorators/public.decorator.js";
 import { AccountScope } from "../../common/access/org-access.decorator.js";
@@ -24,11 +25,18 @@ export class AuthController {
     register(@Body() dto: RegisterDto) { return this.auth.register(dto.name, dto.email, dto.password); }
 
     @Public() @SensitiveThrottle() @Post("login")
-    @ApiCreatedResponse({ type: AuthResponseDto }) @ApiTooManyRequestsResponse()
+    @ApiCreatedResponse({ type: AuthResponseDto }) @ApiTooManyRequestsResponse({ type: ErrorResponseDto })
+    @ApiUnauthorizedResponse({ type: ErrorResponseDto, description: 'Wrong email or password' })
     login(@Body() dto: LoginDto) { return this.auth.login(dto.email, dto.password); }
 
     @Public() @SensitiveThrottle() @Post("refresh")
-    @ApiCreatedResponse({ type: AuthResponseDto, description: 'The old refresh token stops working' })
+    @ApiCreatedResponse({
+        type: AuthResponseDto,
+        description: 'A new pair; the old refresh token is spent. Sending the old token again within 2 minutes '
+            + 'returns the same new refresh token (while it is unused), so a lost response can be retried.',
+    })
+    @ApiUnauthorizedResponse({ type: ErrorResponseDto, description: 'Unknown, expired, revoked or replayed token: sign in again' })
+    @ApiTooManyRequestsResponse({ type: ErrorResponseDto })
     refresh(@Body() dto: RefreshDto) { return this.auth.refresh(dto.refreshToken); }
 
     @Public() @SensitiveThrottle() @Post("logout") @HttpCode(204) @ApiNoContentResponse({ description: 'Ends this session' })
@@ -40,6 +48,7 @@ export class AuthController {
 
     @AccountScope() @ApiBearerAuth() @SensitiveThrottle() @Patch("password")
     @ApiOkResponse({ type: AuthResponseDto, description: 'Other devices are signed out; use the returned tokens here' })
+    @ApiUnauthorizedResponse({ type: ErrorResponseDto, description: 'Current password is wrong, or not signed in' })
     changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
         return this.auth.changePassword(user.id, dto.currentPassword, dto.newPassword);
     }
