@@ -1,45 +1,52 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service.js";
+import { Prisma } from "../../generated/prisma/client.js";
+import { lockRow } from "../../prisma/lock.js";
+import { AuditService } from "../audit/audit.service.js";
 import { CreateEventDto } from "./dto/create-event.dto.js";
 
 @Injectable()
 export class EventsService {
-    constructor(private prisma: PrismaService) { }
-    
-    create(dto: CreateEventDto) {
-        return this.prisma.event.create({
-            data: {
-                name: dto.name.trim(),
-                date: new Date(dto.date)
-            }
-        })
+    constructor(private prisma: PrismaService, private audit: AuditService) { }
+
+    create(dto: CreateEventDto, userId: string) {
+        return this.prisma.$transaction(async (tx) => {
+            const event = await tx.event.create({
+                data: { name: dto.name.trim(), date: new Date(dto.date) },
+            });
+            await this.audit.record(tx, { userId, action: 'CREATE', entity: 'Event', entityId: event.id, after: event });
+            return event;
+        });
     }
 
     list() {
-        return this.prisma.event.findMany({
-            orderBy: {
-                date: 'desc'
-            }
-        })
+        return this.prisma.event.findMany({ orderBy: { date: 'desc' } });
     }
 
-    async get(id: string) {
-        const event = await this.prisma.event.findUnique({ where: { id } });
+    /** `db` lets callers run this inside their own transaction. */
+    async get(id: string, db: Prisma.TransactionClient = this.prisma) {
+        const event = await db.event.findUnique({ where: { id } });
         if (!event) throw new NotFoundException('Event not found');
         return event;
     }
 
-    async setClosed(id: string, closed: boolean) {
-        await this.get(id);
-        return this.prisma.event.update({
-            where: { id },
-            data: { closed }
+    setClosed(id: string, closed: boolean, userId: string) {
+        return this.prisma.$transaction(async (tx) => {
+            await lockRow(tx, 'Event', id);
+            const before = await this.get(id, tx);
+            if (before.closed === closed) return before; // nothing changes, nothing to audit
+
+            const after = await tx.event.update({ where: { id }, data: { closed } });
+            await this.audit.record(tx, {
+                userId, action: closed ? 'CLOSE' : 'REOPEN', entity: 'Event', entityId: id, before, after,
+            });
+            return after;
         });
     }
 
-     /** Used by other modules: no writes are allowed on a closed event. */
-    async assertOpen(id: string) {
-        const event = await this.get(id);
+    /** Used by other modules: no writes are allowed on a closed event. */
+    async assertOpen(id: string, db: Prisma.TransactionClient = this.prisma) {
+        const event = await this.get(id, db);
         if (event.closed) throw new ConflictException('This event is closed');
         return event;
     }

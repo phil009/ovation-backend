@@ -42,12 +42,12 @@ export class DonationsController {
 
   @Roles(Role.ADMIN) @Patch(':id')
   @ApiOkResponse({ type: DonationDto }) @ApiConflictResponse({ description: 'Stale version: reload and retry' })
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateDonationDto) {
-    return this.donations.update(id, dto);
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateDonationDto, @CurrentUser() user: AuthUser) {
+    return this.donations.update(id, dto, user.id);
   }
 
   @Roles(Role.ADMIN) @Delete(':id') @HttpCode(204) @ApiNoContentResponse()
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.donations.remove(id);
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.donations.remove(id, user.id);
   }
 }

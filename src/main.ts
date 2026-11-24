@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module.js';
+import { ObserveInstrument } from './observe.js';
 import { setOpenApiDocument } from './modules/sdk/openapi-store.js';
 
 (BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function (this: bigint) {
@@ -9,7 +10,8 @@ import { setOpenApiDocument } from './modules/sdk/openapi-store.js';
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { instrument: ObserveInstrument });
+  app.enableShutdownHooks(); // lets Observe send its last telemetry when the process stops
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.enableCors(); // restrict to your frontend's URL before deploying
