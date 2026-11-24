@@ -38,8 +38,15 @@ class Env {
   @IsIn(['true', 'false']) @IsOptional()
   SDK_DOWNLOAD_ENABLED?: string;
 
+  /** false hides /api/docs and /api/openapi.json (production). */
+  @IsIn(['true', 'false']) @IsOptional()
+  DOCS_ENABLED?: string;
+
   @IsIn(['true', 'false']) @IsOptional()
   OBSERVE_ENABLED?: string;
+
+  @IsString() @IsOptional() @MinLength(1)
+  OBSERVE_SERVICE_ID?: string;
 }
 
 export function validateEnv(raw: Record<string, unknown>) {

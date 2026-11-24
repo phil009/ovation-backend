@@ -36,7 +36,10 @@ async function bootstrap() {
     app,
     new DocumentBuilder().setTitle('Ovation API').setVersion('0.2.0').addBearerAuth().build(),
   );
-  SwaggerModule.setup('api/docs', app, document, { jsonDocumentUrl: 'api/openapi.json' });
+  // The document is always built (the SDK download uses it); the public docs pages can be switched off.
+  if (config.get<string>('DOCS_ENABLED') !== 'false') {
+    SwaggerModule.setup('api/docs', app, document, { jsonDocumentUrl: 'api/openapi.json' });
+  }
   setOpenApiDocument(document);
 
   await app.listen(config.getOrThrow<number>('PORT'));

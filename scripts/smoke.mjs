@@ -244,18 +244,24 @@ const flagged = rows.find((r) => r.getCell(4).value === 'Hard to read');
 check('doubtful entry has CHECK flag and the note', flagged?.getCell(9).value === 'CHECK' && /unclear/.test(flagged?.getCell(10).value ?? ''));
 
 // ───────────── 12. hardening ─────────────
-const docs = await fetch(`${B}/docs`);
-check('helmet headers present (nosniff, no X-Powered-By)', docs.headers.get('x-content-type-options') === 'nosniff' && !docs.headers.has('x-powered-by'));
+const health = await fetch(`${B}/health`);
+check('health -> 200, database up', health.status === 200 && (await health.json()).info?.database?.status === 'up');
+check('helmet headers present (nosniff, no X-Powered-By)', health.headers.get('x-content-type-options') === 'nosniff' && !health.headers.has('x-powered-by'));
 const rlEmail = `ratelimit-${rnd()}@smoke.test`;
 const hammer = [];
 for (let i = 0; i < 12; i++) hammer.push((await call('POST', '/auth/login', { body: { email: rlEmail, password: 'guessing-123' } })).status);
 check('login guessing is rate limited (429)', hammer.includes(429) && hammer.at(-1) === 429, hammer.join(','));
 
 // ───────────── 13. docs + SDK ─────────────
-check('/api/docs -> 200', docs.status === 200);
+// Production switches both off. Tell the test what to expect: EXPECT_DOCS=false / EXPECT_SDK=false.
+const expectDocs = process.env.EXPECT_DOCS !== 'false';
+const expectSdk = process.env.EXPECT_SDK !== 'false';
+const docs = await fetch(`${B}/docs`);
+check(expectDocs ? '/api/docs -> 200' : '/api/docs switched off -> 404', docs.status === (expectDocs ? 200 : 404), String(docs.status));
 const sdk = await fetch(B + '/sdk/typescript.zip');
 const zip = Buffer.from(await sdk.arrayBuffer());
-check('SDK zip -> 200', sdk.status === 200 && zip.subarray(0, 2).toString() === 'PK', `${zip.length} bytes`);
+check(expectSdk ? 'SDK zip -> 200' : 'SDK download switched off -> 404',
+  expectSdk ? sdk.status === 200 && zip.subarray(0, 2).toString() === 'PK' : sdk.status === 404, `${sdk.status} ${zip.length} bytes`);
 
 console.log(`\n${pass} passed, ${fail} failed. Org ${O}, event ${E}`);
 process.exitCode = fail > 0 ? 1 : 0; // non-zero exit so CI or scripts can tell it failed

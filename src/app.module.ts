@@ -14,6 +14,7 @@ import { DonationsModule } from "./modules/donations/donations.module.js";
 import { ReportsModule } from "./modules/reports/reports.module.js";
 import { SdkModule } from "./modules/sdk/sdk.module.js";
 import { AuditModule } from "./modules/audit/audit.module.js";
+import { HealthModule } from "./modules/health/health.module.js";
 import { JwtAuthGuard } from "./modules/auth/jwt-auth-guard.js";
 import { OrgAccessGuard } from "./common/access/org-access.guard.js";
 
@@ -21,7 +22,8 @@ import { OrgAccessGuard } from "./common/access/org-access.guard.js";
     imports: [
         // First, so it shuts down last and sends everything still buffered.
         ObserveModule.forRoot({
-            serviceId: "ovation-api",
+            // Separate names per environment (ovation-api-staging, ovation-api) keep their data apart.
+            serviceId: process.env.OBSERVE_SERVICE_ID ?? "ovation-api",
             // Set OBSERVE_ENABLED=false to stop a machine from reporting (e.g. local dev).
             enabled: process.env.OBSERVE_ENABLED !== "false",
             // Tag each trace with the logged-in user's id (set by JwtStrategy), never their email.
@@ -41,6 +43,7 @@ import { OrgAccessGuard } from "./common/access/org-access.guard.js";
         ReportsModule,
         SdkModule,
         AuditModule,
+        HealthModule,
     ],
     providers: [
         // Order matters: who are you (JWT) -> too many requests? -> allowed in this organisation?

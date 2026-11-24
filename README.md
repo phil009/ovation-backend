@@ -26,8 +26,9 @@ Built with NestJS 12, PostgreSQL 17, Prisma 7 (Postgres driver adapter), pnpm 10
 9. [Monitoring (NestJS Observe)](#9-monitoring-nestjs-observe)
 10. [Project layout](#10-project-layout)
 11. [Working on the code](#11-working-on-the-code)
-12. [Troubleshooting](#12-troubleshooting)
-13. [Known gaps](#13-known-gaps)
+12. [Deployment (Render)](#12-deployment-render)
+13. [Troubleshooting](#13-troubleshooting)
+14. [Known gaps](#14-known-gaps)
 
 ---
 
@@ -73,6 +74,8 @@ a missing or weak value stops the app with a message saying what to fix.
 | `SDK_DOWNLOAD_ENABLED` | no | `false` turns off the SDK download route. |
 | `OBSERVE_APP_KEY`, `OBSERVE_APP_SECRET` | no | NestJS Observe credentials. Without them nothing is sent. |
 | `OBSERVE_ENABLED` | no | `false` stops this machine from reporting to Observe. |
+| `OBSERVE_SERVICE_ID` | no | The service name in Observe. Default `ovation-api`; staging uses `ovation-api-staging`. |
+| `DOCS_ENABLED` | no | `false` hides `/api/docs` and `/api/openapi.json` (production). |
 
 `JWT_REFRESH_SECRET` is no longer used: refresh tokens are now random strings stored hashed in the database (section 4).
 
@@ -95,6 +98,7 @@ Always use `pnpm exec`, not `npx`, so the project's pinned versions run.
 | `pnpm test:smoke` | End-to-end test against the running API (section 7) |
 | `pnpm db:seed` | Create an account and an organisation it administers (safe to run again) |
 | `docker compose up -d` / `docker compose down` | Start / stop Postgres (data survives in a Docker volume) |
+| `docker compose --profile app up --build` | Also build and run the **production image** on `http://localhost:5001/api` against a fresh database (section 12) |
 | `pnpm exec prisma migrate dev --name <name>` | After editing `schema.prisma`: create and apply a migration |
 | `pnpm exec prisma migrate deploy` | Apply existing migrations (fresh machine, production) |
 | `pnpm exec prisma generate` | Regenerate the client. Prisma 7 does **not** do this automatically. |
@@ -279,7 +283,11 @@ Full, always-current details: **`/api/docs`** (Swagger UI) or **`/api/openapi.js
 | `GET /api/events/:eventId/summary` | viewer | Per-awardee totals, general donations, grand totals |
 | `GET /api/events/:eventId/export.xlsx` | viewer | Excel workbook in the notebook layout |
 
-**Other:** `GET /api/sdk/typescript.zip` (public), `GET /api/docs` and `/api/openapi.json` (public).
+**Other (public):**
+
+- `GET /api/health`: 200 `{ status: "ok" }` when the database is reachable, 503 when not. Not rate limited.
+- `GET /api/sdk/typescript.zip`: off when `SDK_DOWNLOAD_ENABLED=false`.
+- `GET /api/docs` and `/api/openapi.json`: off when `DOCS_ENABLED=false`.
 
 **Enums:** `paymentMode`: `CASH`, `TRANSFER`, `PLEDGE`. `status`: `PLEDGED`, `RECEIVED`
 (defaults to `PLEDGED` when `paymentMode` is `PLEDGE`, otherwise `RECEIVED`).
@@ -367,7 +375,7 @@ Invoke-RestMethod -Method Patch "$api/donations/<id>" -Headers $h @json `
 ### Automated smoke test
 
 `scripts/smoke.mjs` exercises the whole API over HTTP and prints `PASS`/`FAIL` per check
-(97 checks; it exits non-zero if any fail). It registers its own throwaway users (`*@smoke.test`)
+(98 checks; it exits non-zero if any fail). It registers its own throwaway users (`*@smoke.test`)
 and organisations, so it needs no seed data.
 
 ```powershell
@@ -406,7 +414,12 @@ What it covers:
 - **Hardening:** helmet headers; login guessing hits 429.
 - **Docs and SDK:** both load.
 
-Don't run it against a shared or production database: it creates data every run. Set `API_URL` to test another server.
+Don't run it against a shared or production database: it creates data every run. Settings:
+
+- `API_URL` tests another server.
+- `EXPECT_DOCS=false` / `EXPECT_SDK=false` expect those routes to be switched off (404), as in production mode.
+
+It also runs in GitHub Actions on every push to `staging` and `main` (section 12).
 
 ### Manual checklist (Postman or Swagger)
 
@@ -489,6 +502,10 @@ prisma/
   seed.ts                  creates an account + an organisation it administers
 prisma7.config.ts          the Prisma config (loads DATABASE_URL); don't add a second one
 scripts/smoke.mjs          end-to-end smoke test
+Dockerfile                 production image (migrations run on start)
+docker-compose.yaml        local Postgres; `--profile app` adds the production image
+render.yaml                Render Blueprint: staging + production services and databases
+.github/workflows/ci.yml   CI: type-check, build, smoke test, Docker build
 src/
   main.ts                  startup: helmet, CORS, trust proxy, /api prefix, validation, Swagger, listen
   app.module.ts            root module: config (validated), rate limits, global guards
@@ -509,6 +526,7 @@ src/
     donations/             single, batch, list, versioned update, soft delete
     reports/               per-event summary and Excel export
     audit/                 AuditService (writes) and GET /orgs/:orgId/audit-log (reads)
+    health/                GET /api/health (database ping, used by Render)
     sdk/                   SDK zip download
 ```
 
@@ -542,7 +560,93 @@ src/
 
 ---
 
-## 12. Troubleshooting
+## 12. Deployment (Render)
+
+The API runs on [Render](https://render.com) in Frankfurt, as a Docker container with a managed Postgres database.
+Everything is described in `render.yaml` (a Render "Blueprint").
+
+| | Staging | Production |
+| --- | --- | --- |
+| Branch | `staging` | `main` |
+| URL | `https://ovation-api-staging.onrender.com/api` | `https://ovation-api.onrender.com/api` |
+| Used for | Building and testing the frontend | Real events |
+| Instance | Free: sleeps after 15 min idle; the first request then takes about a minute | Smallest always-on (`0.5c-512mb`) |
+| Database | `ovation-db-staging` (smallest paid plan) | `ovation-db` (smallest paid plan) |
+| Swagger docs, SDK download | On | Off |
+
+Free Render databases are deleted after 30 days, so both use the smallest paid plan. Check Render's pricing page for current costs.
+
+If the `.onrender.com` names are already taken, Render adds a suffix. The real URLs are shown on each service's page.
+
+### How a change goes live
+
+1. Push to `staging` (or merge `staging` into `main` for production).
+2. **GitHub Actions** (`.github/workflows/ci.yml`) type-checks, builds, starts the API against a fresh Postgres,
+   runs all smoke checks, and builds the Docker image.
+3. Only if CI passes, **Render** builds the `Dockerfile` (`autoDeployTrigger: checksPass`).
+4. The new container runs `prisma migrate deploy`, then starts the API.
+5. Render waits for `GET /api/health` to return 200, then switches traffic to the new version.
+
+If the migration fails or the health check never passes, the previous version keeps serving and nothing breaks.
+
+Suggested flow: feature branch → pull request into `staging` → try it with the frontend → pull request `staging` → `main`.
+
+### First-time setup (once)
+
+1. Make sure `render.yaml` is on `main` (merge `staging` into `main`).
+2. In Render: **New → Blueprint**. Connect GitHub, pick `phil009/ovation-backend` and the `main` branch.
+   Render lists 2 web services and 2 databases.
+3. Fill in the values it asks for:
+   - **`CORS_ORIGINS`** (required: production mode refuses to start without it):
+     - staging: `http://localhost:3000`, plus the staging frontend URL later, comma-separated;
+     - production: the frontend's real URL.
+   - **`OBSERVE_APP_KEY` / `OBSERVE_APP_SECRET`**: the same values as your local `.env`, or leave them empty to send nothing.
+     Staging and production appear separately in Observe (`OBSERVE_SERVICE_ID`).
+4. Click **Apply**. The first build takes a few minutes.
+5. Check `https://<service>.onrender.com/api/health` on both services.
+6. **Production has no seed data.** Create the first real account and organisation through the API or the frontend
+   (`POST /api/auth/register`, then `POST /api/orgs`), then invite helpers with codes.
+7. In the frontend repo, set `OVATION_API_URL` to the staging URL and run `pnpm sdk:pull`.
+
+`JWT_ACCESS_SECRET` is generated by Render, separately for each environment, so tokens from staging never work on production.
+Don't change it casually: changing it logs everyone out.
+
+### Day to day
+
+- **Change a setting:** service → **Environment** → edit → save (the service restarts).
+- **Logs:** service → **Logs**. Errors and slow requests also appear in Observe.
+- **Roll back:** service → **Events** → pick an earlier successful deploy → **Rollback**.
+  - A rollback does **not** undo database migrations.
+  - So keep migrations backward-compatible: add a column in one release, and remove old ones only in a later release.
+- **Run the smoke test against staging** (never production: it creates test accounts and organisations):
+
+  ```powershell
+  $env:API_URL = "https://ovation-api-staging.onrender.com/api"; node scripts/smoke.mjs; Remove-Item Env:API_URL
+  ```
+
+- **Look at a database from your laptop:** the databases accept connections only from Render (`ipAllowList: []`).
+  - To use Prisma Studio or `psql`, add your IP under the database's **Access Control** for the session.
+  - Then use the **External Database URL**, and remove your IP afterwards.
+- **Backups:** paid Render Postgres is backed up automatically. The database's **Recovery** page shows the retention
+  and how to restore (a restore creates a new database). Practise one restore on staging before the first real event.
+- **Custom domain later:** service → **Settings → Custom Domains** (for example `api.ovation.ng`). Render issues
+  the HTTPS certificate. Then update the frontend's API URL, and `CORS_ORIGINS` if the frontend's domain changes.
+
+### Running the production image locally
+
+```powershell
+docker compose --profile app up --build      # API on http://localhost:5001/api, empty ovation_container database
+$env:API_URL = "http://localhost:5001/api"; $env:EXPECT_DOCS = "false"; $env:EXPECT_SDK = "false"
+node scripts/smoke.mjs
+docker compose --profile app stop api        # Postgres keeps running for normal development
+```
+
+The image is about 1 GB uncompressed. Most of that is the Node base image plus the Prisma CLI, which is kept so
+migrations can run on start. That's fine for now; a separate migration image could shrink it later.
+
+---
+
+## 13. Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
@@ -559,16 +663,23 @@ src/
 | `Unsupported engine` on install | You're not on Node 24. Run `node -v` and install Node 24. |
 | argon2 or Prisma errors after install | Run `pnpm approve-builds`, then `pnpm install` again. |
 | SDK changes don't show up | The zip is cached in memory. Restart the API. |
+| Render deploy fails with `Invalid environment configuration` | Usually `CORS_ORIGINS` is empty. Set it under the service's Environment tab. |
+| Render deploy stuck "waiting for health check" | Open the service Logs: a failed migration or a database connection error shows there. The old version keeps serving meanwhile. |
+| Staging takes about a minute to answer | The free instance was asleep (15 min idle). Expected; production doesn't sleep. |
+| Render didn't deploy after a push | It deploys only after GitHub CI passes. Check the Actions tab on GitHub. |
+| `docker build` times out pulling `node:24-bookworm-slim` | A Docker Hub network problem. Pull it via the mirror, then build again: `docker pull mirror.gcr.io/library/node:24-bookworm-slim; docker tag mirror.gcr.io/library/node:24-bookworm-slim node:24-bookworm-slim` |
 
 ---
 
-## 13. Known gaps
+## 14. Known gaps
 
 - **No email yet:** no email verification, no "forgot password", and no email invites.
   A user who forgets their password can't recover it yet. Planned with `@nestjs/mail` before public launch.
-- **Rate-limit counters are in memory.** With more than one server instance, move them to Redis.
 - **Not built yet:** transfer confirmation (reference, sender bank, confirmed by and at), deleting an account or organisation,
   billing flags.
-- **No unit tests, Dockerfile or deployment setup yet.**
+- **No unit tests yet** (the end-to-end smoke test runs in CI).
+- **Rate limits and the SDK cache are per instance.** That's fine with one instance per environment. Before scaling
+  production to several instances, move the throttler storage to Redis (Render Key Value).
+- **Image size** is about 1 GB uncompressed (section 12).
 - **Data protection:** donor names and amounts are personal data. Get advice on Nigeria's data protection law
   before storing data for paying customers.
