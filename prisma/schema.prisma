@@ -112,6 +112,14 @@ model RefreshToken {
   revokedAt DateTime?
   createdAt DateTime  @default(now())
 
+  /// The token that replaced this one at refresh time.
+  replacedById    String?       @unique
+  replacedBy      RefreshToken? @relation("Rotation", fields: [replacedById], references: [id], onDelete: SetNull)
+  replaces        RefreshToken? @relation("Rotation")
+  /// The replacement token, encrypted with a key derived from THIS token's plaintext (never stored).
+  /// Lets a retried refresh get the same replacement back within the grace window.
+  successorSealed String?
+
   @@index([userId])
   @@map("refresh_tokens")
 }

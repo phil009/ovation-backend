@@ -10,7 +10,7 @@ export class CreateDonationDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID('all') eventId: string;
 
-  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'Leave out (or null) for a general donation to all awardees' })
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true, description: 'Leave out (or null) for a general donation to all awardees' })
   @IsOptional() @IsUUID('all') awardeeId?: string | null;
 
   @ApiProperty({ example: 'Mrs Ngozi Okafor' })

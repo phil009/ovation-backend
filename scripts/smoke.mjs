@@ -201,10 +201,19 @@ check('race: 3 simultaneous edits at version 1 -> one 200, two 409', edits.filte
 const L = (await call('POST', '/auth/login', { body: { email: A.email, password: PW } })).json;
 const r1 = await call('POST', '/auth/refresh', { body: { refreshToken: L.refreshToken } });
 check('refresh -> 201 with a new refresh token', r1.status === 201 && r1.json.refreshToken !== L.refreshToken);
-check('old refresh token after rotation -> 401', (await call('POST', '/auth/refresh', { body: { refreshToken: L.refreshToken } })).status === 401);
-check('new access token works', (await call('GET', '/auth/me', { token: r1.json.accessToken })).status === 200);
-check('logout -> 204', (await call('POST', '/auth/logout', { body: { refreshToken: r1.json.refreshToken } })).status === 204);
-check('refresh after logout -> 401', (await call('POST', '/auth/refresh', { body: { refreshToken: r1.json.refreshToken } })).status === 401);
+const retry = await call('POST', '/auth/refresh', { body: { refreshToken: L.refreshToken } });
+check('retry with the old token (lost response) -> same new refresh token', retry.status === 201 && retry.json.refreshToken === r1.json.refreshToken, String(retry.status));
+const twice = await Promise.all([1, 2].map(() => call('POST', '/auth/refresh', { body: { refreshToken: r1.json.refreshToken } })));
+check('two simultaneous refreshes -> both 201 with the same token', twice.every((r) => r.status === 201) && twice[0].json.refreshToken === twice[1].json.refreshToken, statuses(twice));
+const r2 = twice[0].json;
+check('new access token works', (await call('GET', '/auth/me', { token: r2.accessToken })).status === 200);
+await call('POST', '/auth/refresh', { body: { refreshToken: r2.refreshToken } }); // r2 is now spent too
+check('token two rotations back -> 401', (await call('POST', '/auth/refresh', { body: { refreshToken: r1.json.refreshToken } })).status === 401);
+const L2 = (await call('POST', '/auth/login', { body: { email: A.email, password: PW } })).json;
+const lost = (await call('POST', '/auth/refresh', { body: { refreshToken: L2.refreshToken } })).json;
+check('logout -> 204', (await call('POST', '/auth/logout', { body: { refreshToken: L2.refreshToken } })).status === 204);
+check('logout with the old token also ends the unseen replacement', (await call('POST', '/auth/refresh', { body: { refreshToken: lost.refreshToken } })).status === 401);
+check('refresh after logout -> 401', (await call('POST', '/auth/refresh', { body: { refreshToken: L2.refreshToken } })).status === 401);
 const S1 = (await call('POST', '/auth/login', { body: { email: Bu.email, password: PW } })).json;
 const S2 = (await call('POST', '/auth/login', { body: { email: Bu.email, password: PW } })).json;
 check('logout-all -> 204', (await call('POST', '/auth/logout-all', { token: S1.accessToken })).status === 204);

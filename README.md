@@ -119,11 +119,19 @@ in this organisation?) → controller → service → Prisma → Postgres.
 - Anyone can **register** with name, email and password (8 to 128 characters). There's no email verification yet.
 - **Login and register** return an `accessToken` (a JWT, valid 15 minutes, sent as `Authorization: Bearer ...`)
   and a `refreshToken` (valid 7 days).
-- **Refresh tokens are single-use.** `POST /auth/refresh` returns a new pair and the old refresh token stops working.
+- **Refresh tokens are single-use.** `POST /auth/refresh` returns a new pair and the old refresh token is spent.
   Store the new one every time.
-  - Sending a spent refresh token again a little later (more than 30 seconds) is treated as possible theft,
-    and every session of that account is ended.
-  - The frontend should therefore run only one refresh at a time.
+  - **Sliding expiry:** each refresh issues a token valid 7 days from that moment. A user who opens the app at least
+    once a week stays signed in; there's no absolute maximum session length yet.
+  - **Retries are safe for 2 minutes.** If the response to a refresh is lost, send the old token again: within
+    2 minutes of its first use, and while the replacement hasn't been used yet, you get the **same** new refresh
+    token back (with a fresh access token). Two tabs refreshing at the same moment also both get the same token.
+    The replacement is stored encrypted with a key derived from the old token, so the database alone can't reveal it.
+  - Sending a spent token **later than 2 minutes** is treated as possible theft, and every session of that account
+    is ended. Sending it after its replacement was already used gives 401 (sign in again).
+- **Error bodies** always look like `{ "statusCode": 401, "message": "...", "error": "Unauthorized" }`. On 400,
+  `message` is a list of strings (one per invalid field). The OpenAPI document calls this `ErrorResponseDto` and
+  sets it as every endpoint's `default` response, so the SDK types `error`.
 - **Logout** ends one session, **logout-all** ends every session (all devices), and **changing the password** ends
   all other sessions. An access token that was already issued keeps working until it expires (at most 15 minutes).
 - Only a SHA-256 hash of each refresh token is stored, so a database leak doesn't hand out sessions.
@@ -375,7 +383,7 @@ Invoke-RestMethod -Method Patch "$api/donations/<id>" -Headers $h @json `
 ### Automated smoke test
 
 `scripts/smoke.mjs` exercises the whole API over HTTP and prints `PASS`/`FAIL` per check
-(98 checks; it exits non-zero if any fail). It registers its own throwaway users (`*@smoke.test`)
+(101 checks; it exits non-zero if any fail). It registers its own throwaway users (`*@smoke.test`)
 and organisations, so it needs no seed data.
 
 ```powershell
@@ -456,7 +464,7 @@ import { createOvationClient } from './sdk';
 
 const api = createOvationClient({
   baseUrl: process.env.NEXT_PUBLIC_API_URL!,           // server origin, no /api; paths include it
-  getAccessToken: () => localStorage.getItem('accessToken'),
+  getAccessToken: () => session.accessToken,          // keep tokens in memory, not localStorage
 });
 
 const { data: me } = await api.GET('/api/auth/me');   // me.memberships -> organisation switcher
@@ -470,9 +478,12 @@ const { data: xlsx } = await api.GET('/api/events/{eventId}/export.xlsx', {
 
 **Frontend notes:**
 
-- After every `POST /auth/refresh`, store the **new** refresh token; the old one is dead.
-- Run one refresh at a time, for example with a shared promise.
+- Don't put tokens in `localStorage` (any injected script can read it). Keep the access token in memory.
+- After every `POST /auth/refresh`, store the **new** refresh token; the old one is spent.
+- Run one refresh at a time, for example with a shared promise. If a refresh fails on the network (no response),
+  retry it with the **same old token** within 2 minutes: you get the same new token back.
 - On 401 from refresh, send the user to login.
+- Errors: `error.message` is `string[]` on 400 and `string` otherwise (`ErrorResponseDto`).
 - Treat 404 on a resource as "not found or not yours".
 
 The SDK is only as well-typed as the Swagger decorators. Every new DTO field needs `@ApiProperty`, and every
