@@ -38,28 +38,96 @@ enum DonationStatus {
   RECEIVED
 }
 
+/// An account. What a user may do is decided per organisation, by their Membership role.
 model User {
-  id           String     @id @default(uuid())
-  email        String     @unique
-  passwordHash String
-  name         String
-  role         Role       @default(EDITOR)
-  createdAt    DateTime   @default(now())
-  donations    Donation[]
-  auditLogs    AuditLog[]
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  name          String
+  createdAt     DateTime       @default(now())
+  donations     Donation[]
+  auditLogs     AuditLog[]
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
+  invitesMade   InviteCode[]
 
   @@map("users")
 }
 
-model Event {
-  id        String     @id @default(uuid())
-  name      String
-  date      DateTime
-  closed    Boolean    @default(false)
-  createdAt DateTime   @default(now())
-  awardees  Awardee[]
-  donations Donation[]
+/// A customer: a town union, church, association... Owns its events.
+model Organization {
+  id          String       @id @default(uuid())
+  name        String
+  createdById String
+  createdAt   DateTime     @default(now())
+  memberships Membership[]
+  events      Event[]
+  inviteCodes InviteCode[]
+  auditLogs   AuditLog[]
 
+  @@map("organizations")
+}
+
+/// A user's place in an organisation, with their role there.
+model Membership {
+  id             String       @id @default(uuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  role           Role
+  createdAt      DateTime     @default(now())
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("memberships")
+}
+
+/// A shareable code that lets anyone with an account join an organisation with a set role.
+model InviteCode {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  code           String       @unique
+  role           Role
+  maxUses        Int?
+  uses           Int          @default(0)
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdById    String
+  createdBy      User         @relation(fields: [createdById], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@map("invite_codes")
+}
+
+/// One login session. Only a SHA-256 hash of the token is stored; each refresh replaces it.
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Event {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  date           DateTime
+  closed         Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  awardees       Awardee[]
+  donations      Donation[]
+
+  @@index([organizationId])
   @@map("events")
 }
 
@@ -104,16 +172,20 @@ model Donation {
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  action    String
-  entity    String
-  entityId  String
-  before    Json?
-  after     Json?
-  createdAt DateTime @default(now())
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id])
+  /// The organisation the change belongs to (null for account-level actions).
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  action         String
+  entity         String
+  entityId       String
+  before         Json?
+  after          Json?
+  createdAt      DateTime      @default(now())
 
   @@index([entity, entityId])
+  @@index([organizationId, createdAt])
   @@map("audit_log")
 }

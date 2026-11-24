@@ -36,7 +36,7 @@ export class AwardeesService {
 
   create(eventId: string, dto: CreateAwardeeDto, userId: string) {
     return this.prisma.$transaction(async (tx) => {
-      await this.events.assertOpen(eventId, tx);
+      const event = await this.events.assertOpen(eventId, tx);
       const after = await tx.awardee.create({
         data: {
           eventId,
@@ -46,7 +46,7 @@ export class AwardeesService {
           paymentMode: dto.paymentMode,
         },
       });
-      await this.audit.record(tx, { userId, action: 'CREATE', entity: 'Awardee', entityId: after.id, after });
+      await this.audit.record(tx, { userId, organizationId: event.organizationId, action: 'CREATE', entity: 'Awardee', entityId: after.id, after });
       return toPublic(after);
     });
   }
@@ -55,7 +55,7 @@ export class AwardeesService {
     return this.prisma.$transaction(async (tx) => {
       await lockRow(tx, 'Awardee', id);
       const before = await this.findLiveRow(eventId, id, tx);
-      await this.events.assertOpen(eventId, tx);
+      const event = await this.events.assertOpen(eventId, tx);
       const after = await tx.awardee.update({
         where: { id },
         data: {
@@ -65,7 +65,7 @@ export class AwardeesService {
           paymentMode: dto.paymentMode,
         },
       });
-      await this.audit.record(tx, { userId, action: 'UPDATE', entity: 'Awardee', entityId: id, before, after });
+      await this.audit.record(tx, { userId, organizationId: event.organizationId, action: 'UPDATE', entity: 'Awardee', entityId: id, before, after });
       return toPublic(after);
     });
   }
@@ -75,13 +75,13 @@ export class AwardeesService {
     await this.prisma.$transaction(async (tx) => {
       await lockRow(tx, 'Awardee', id);
       const before = await this.findLiveRow(eventId, id, tx);
-      await this.events.assertOpen(eventId, tx);
+      const event = await this.events.assertOpen(eventId, tx);
       const donations = await tx.donation.count({ where: { awardeeId: id, deletedAt: null } });
       if (donations > 0) {
         throw new ConflictException(`This awardee still has ${donations} donation(s); move or delete them first`);
       }
       const after = await tx.awardee.update({ where: { id }, data: { deletedAt: new Date() } });
-      await this.audit.record(tx, { userId, action: 'DELETE', entity: 'Awardee', entityId: id, before, after });
+      await this.audit.record(tx, { userId, organizationId: event.organizationId, action: 'DELETE', entity: 'Awardee', entityId: id, before, after });
     });
   }
 

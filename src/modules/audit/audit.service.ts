@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client.js';
 
-export type AuditEntity = 'Event' | 'Awardee' | 'Donation';
-export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'CLOSE' | 'REOPEN';
+export type AuditEntity = 'Organization' | 'Membership' | 'InviteCode' | 'Event' | 'Awardee' | 'Donation';
+export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'CLOSE' | 'REOPEN' | 'REVOKE';
 
 export interface AuditEntry {
   userId: string;
+  /** The organisation the change belongs to; its admins can read the entry. */
+  organizationId: string;
   action: AuditAction;
   entity: AuditEntity;
   entityId: string;
@@ -32,6 +34,7 @@ export class AuditService {
 function toRow(e: AuditEntry): Prisma.AuditLogCreateManyInput {
   return {
     userId: e.userId,
+    organizationId: e.organizationId,
     action: e.action,
     entity: e.entity,
     entityId: e.entityId,

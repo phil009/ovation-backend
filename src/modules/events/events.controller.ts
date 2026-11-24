@@ -4,29 +4,36 @@ import { EventsService } from "./events.service.js";
 import { EventDto } from "./dto/event.dto.js";
 import { CreateEventDto } from "./dto/create-event.dto.js";
 import { Role } from "../../generated/prisma/enums.js";
-import { Roles } from "../../common/decorators/roles.decorator.js";
+import { From, OrgAccess } from "../../common/access/org-access.decorator.js";
 import { CurrentUser } from "../../common/decorators/current-user.decorator.js";
-
-type AuthUser = { id: string };
+import type { AuthUser } from "../../common/decorators/current-user.decorator.js";
 
 @ApiTags('events')
 @ApiBearerAuth()
-@Controller('events')
+@Controller()
 export class EventsController {
     constructor(private events: EventsService) { }
 
-    @Get() @ApiOkResponse({ type: EventDto, isArray: true })
-    list() { return this.events.list(); }
+    @OrgAccess(Role.VIEWER, From.orgParam()) @Get('orgs/:orgId/events')
+    @ApiOkResponse({ type: EventDto, isArray: true })
+    list(@Param('orgId', ParseUUIDPipe) orgId: string) { return this.events.list(orgId); }
 
-    @Get(':id') @ApiOkResponse({ type: EventDto })
+    @OrgAccess(Role.EDITOR, From.orgParam()) @Post('orgs/:orgId/events')
+    @ApiCreatedResponse({ type: EventDto })
+    create(@Param('orgId', ParseUUIDPipe) orgId: string, @Body() dto: CreateEventDto, @CurrentUser() user: AuthUser) {
+        return this.events.create(orgId, dto, user.id);
+    }
+
+    @OrgAccess(Role.VIEWER, From.eventParam('id')) @Get('events/:id') @ApiOkResponse({ type: EventDto })
     get(@Param('id', ParseUUIDPipe) id: string) { return this.events.get(id); }
 
-    @Roles(Role.ADMIN, Role.EDITOR) @Post() @ApiCreatedResponse({ type: EventDto })
-    create(@Body() dto: CreateEventDto, @CurrentUser() user: AuthUser) { return this.events.create(dto, user.id); }
+    @OrgAccess(Role.ADMIN, From.eventParam('id')) @Patch('events/:id/close') @ApiOkResponse({ type: EventDto })
+    close(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+        return this.events.setClosed(id, true, user.id);
+    }
 
-    @Roles(Role.ADMIN) @Patch(':id/close') @ApiOkResponse({ type: EventDto })
-    close(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) { return this.events.setClosed(id, true, user.id); }
-
-    @Roles(Role.ADMIN) @Patch(':id/reopen') @ApiOkResponse({ type: EventDto })
-    reopen(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) { return this.events.setClosed(id, false, user.id); }
+    @OrgAccess(Role.ADMIN, From.eventParam('id')) @Patch('events/:id/reopen') @ApiOkResponse({ type: EventDto })
+    reopen(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+        return this.events.setClosed(id, false, user.id);
+    }
 }

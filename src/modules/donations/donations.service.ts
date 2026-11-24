@@ -39,7 +39,7 @@ export class DonationsService {
       const existing = await tx.donation.findUnique({ where: { id: dto.id }, select });
       if (existing) return existing; // a replay: nothing changes, nothing to audit
 
-      await this.events.assertOpen(dto.eventId, tx);
+      const event = await this.events.assertOpen(dto.eventId, tx);
       if (dto.awardeeId) await this.awardees.findLive(dto.eventId, dto.awardeeId, tx);
 
       // ON CONFLICT DO NOTHING: if an identical request won a race, we get no row back.
@@ -49,7 +49,7 @@ export class DonationsService {
       });
       if (!after) return tx.donation.findUniqueOrThrow({ where: { id: dto.id }, select });
 
-      await this.audit.record(tx, { userId, action: 'CREATE', entity: 'Donation', entityId: after.id, after });
+      await this.audit.record(tx, { userId, organizationId: event.organizationId, action: 'CREATE', entity: 'Donation', entityId: after.id, after });
       return toPublic(after);
     });
   }
@@ -64,9 +64,11 @@ export class DonationsService {
     const unique = [...new Map(items.map((d) => [d.id, d])).values()];
 
     return this.prisma.$transaction(async (tx) => {
-      // Every event must exist and be open.
+      // Every event must exist and be open. Remember each event's organisation for the audit log.
+      const orgOfEvent = new Map<string, string>();
       for (const eventId of new Set(unique.map((d) => d.eventId))) {
-        await this.events.assertOpen(eventId, tx);
+        const event = await this.events.assertOpen(eventId, tx);
+        orgOfEvent.set(eventId, event.organizationId);
       }
 
       // Every awardee must be live and belong to the event the donation names.
@@ -92,7 +94,8 @@ export class DonationsService {
         skipDuplicates: true,
       });
       await this.audit.recordMany(tx, created.map((after) => ({
-        userId, action: 'CREATE' as const, entity: 'Donation' as const, entityId: after.id, after,
+        userId, organizationId: orgOfEvent.get(after.eventId)!, action: 'CREATE' as const,
+        entity: 'Donation' as const, entityId: after.id, after,
       })));
 
       const createdIds = new Set(created.map((c) => c.id));
@@ -133,7 +136,7 @@ export class DonationsService {
     return this.prisma.$transaction(async (tx) => {
       await lockRow(tx, 'Donation', id);
       const before = await this.findLiveRow(id, tx);
-      await this.events.assertOpen(before.eventId, tx);
+      const event = await this.events.assertOpen(before.eventId, tx);
       if (dto.awardeeId) await this.awardees.findLive(before.eventId, dto.awardeeId, tx);
 
       if (before.version !== dto.version) {
@@ -152,7 +155,7 @@ export class DonationsService {
           version: { increment: 1 },
         },
       });
-      await this.audit.record(tx, { userId, action: 'UPDATE', entity: 'Donation', entityId: id, before, after });
+      await this.audit.record(tx, { userId, organizationId: event.organizationId, action: 'UPDATE', entity: 'Donation', entityId: id, before, after });
       return toPublic(after);
     });
   }
@@ -161,12 +164,12 @@ export class DonationsService {
     await this.prisma.$transaction(async (tx) => {
       await lockRow(tx, 'Donation', id);
       const before = await this.findLiveRow(id, tx);
-      await this.events.assertOpen(before.eventId, tx);
+      const event = await this.events.assertOpen(before.eventId, tx);
       const after = await tx.donation.update({
         where: { id },
         data: { deletedAt: new Date(), version: { increment: 1 } },
       });
-      await this.audit.record(tx, { userId, action: 'DELETE', entity: 'Donation', entityId: id, before, after });
+      await this.audit.record(tx, { userId, organizationId: event.organizationId, action: 'DELETE', entity: 'Donation', entityId: id, before, after });
     });
   }
 
