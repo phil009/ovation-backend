@@ -1,13 +1,18 @@
-# Render Blueprint: staging + production for the Ovation API.
-# Apply once in the Render dashboard: New -> Blueprint -> pick this repo.
-# Spec: https://render.com/docs/blueprint-spec
+# Render Blueprint for the Ovation API. Spec: https://render.com/docs/blueprint-spec
 #
-#   staging    branch `staging` -> https://ovation-api-staging.onrender.com  (frontend development)
-#   production branch `main`    -> https://ovation-api.onrender.com          (real events)
+# NOW (no customers yet, $0/month): staging only.
+#   staging  branch `staging` -> https://ovation-api-staging.onrender.com  (frontend development)
+#   - Render free web service: sleeps after 15 min idle, ~1 min to wake.
+#   - Database: NOT on Render (free Render Postgres is deleted after 30 days). Paste the connection
+#     string of a free Neon project (https://neon.tech, region AWS Europe (Frankfurt), the direct,
+#     non-pooled string) as DATABASE_URL when Render asks.
 #
-# Each deploys automatically after GitHub CI passes on its branch. Database migrations run
-# when the container starts (see Dockerfile). Values marked `sync: false` are asked for once,
-# when the Blueprint is first applied; change them later under the service's Environment tab.
+# LATER (about two weeks before the first real event): uncomment the production section below.
+# It needs a card on Render (an always-on instance plus a paid database with backups).
+#
+# Deploys happen automatically after GitHub CI passes on the branch. Database migrations run when
+# the container starts (see Dockerfile). `sync: false` values are asked for once, when the Blueprint
+# is first applied; change them later under the service's Environment tab.
 
 services:
   # ---------- staging ----------
@@ -16,7 +21,7 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     region: frankfurt
-    plan: free # sleeps after 15 min idle, ~1 min to wake; fine for frontend development
+    plan: free
     branch: staging
     autoDeployTrigger: checksPass
     healthCheckPath: /api/health
@@ -24,9 +29,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        fromDatabase:
-          name: ovation-db-staging
-          property: connectionString
+        sync: false # Neon connection string, e.g. postgresql://user:pass@ep-xxx.eu-central-1.aws.neon.tech/neondb?sslmode=require
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: CORS_ORIGINS
@@ -40,56 +43,48 @@ services:
       - key: OBSERVE_SERVICE_ID
         value: ovation-api-staging
       - key: OBSERVE_APP_KEY
-        sync: false
+        sync: false # optional: leave empty to send nothing to Observe
       - key: OBSERVE_APP_SECRET
         sync: false
 
-  # ---------- production ----------
-  - type: web
-    name: ovation-api
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    region: frankfurt
-    plan: 0.5c-512mb # smallest always-on instance
-    branch: main
-    autoDeployTrigger: checksPass
-    healthCheckPath: /api/health
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ovation-db
-          property: connectionString
-      - key: JWT_ACCESS_SECRET
-        generateValue: true
-      - key: CORS_ORIGINS
-        sync: false # the production frontend URL, e.g. https://app.example.com
-      - key: TRUST_PROXY
-        value: "1"
-      - key: DOCS_ENABLED
-        value: "false"
-      - key: SDK_DOWNLOAD_ENABLED
-        value: "false"
-      - key: OBSERVE_SERVICE_ID
-        value: ovation-api
-      - key: OBSERVE_APP_KEY
-        sync: false
-      - key: OBSERVE_APP_SECRET
-        sync: false
+  # ---------- production (paid: enable before the first real event) ----------
+  # - type: web
+  #   name: ovation-api
+  #   runtime: docker
+  #   dockerfilePath: ./Dockerfile
+  #   region: frankfurt
+  #   plan: 0.5c-512mb # smallest always-on instance
+  #   branch: main
+  #   autoDeployTrigger: checksPass
+  #   healthCheckPath: /api/health
+  #   envVars:
+  #     - key: NODE_ENV
+  #       value: production
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: ovation-db
+  #         property: connectionString
+  #     - key: JWT_ACCESS_SECRET
+  #       generateValue: true
+  #     - key: CORS_ORIGINS
+  #       sync: false # the production frontend URL
+  #     - key: TRUST_PROXY
+  #       value: "1"
+  #     - key: DOCS_ENABLED
+  #       value: "false"
+  #     - key: SDK_DOWNLOAD_ENABLED
+  #       value: "false"
+  #     - key: OBSERVE_SERVICE_ID
+  #       value: ovation-api
+  #     - key: OBSERVE_APP_KEY
+  #       sync: false
+  #     - key: OBSERVE_APP_SECRET
+  #       sync: false
 
-databases:
-  # Free Render Postgres is deleted after 30 days, so both use the smallest paid plan.
-  - name: ovation-db-staging
-    databaseName: ovation
-    region: frankfurt
-    plan: 0.1c-256mb
-    postgresMajorVersion: "17"
-    ipAllowList: [] # reachable only from Render services, not the internet
-
-  - name: ovation-db
-    databaseName: ovation
-    region: frankfurt
-    plan: 0.1c-256mb
-    postgresMajorVersion: "17"
-    ipAllowList: []
+# databases:
+#   - name: ovation-db
+#     databaseName: ovation
+#     region: frankfurt
+#     plan: 0.1c-256mb # paid: kept with automatic backups
+#     postgresMajorVersion: "17"
+#     ipAllowList: [] # reachable only from Render services
