@@ -6,7 +6,7 @@
 generator client {
   provider     = "prisma-client"
   output       = "../src/generated/prisma"
-  moduleFormat = "cjs"
+  moduleFormat = "esm"
 }
 
 datasource db {
@@ -34,8 +34,8 @@ enum PaymentMode {
 }
 
 enum DonationStatus {
-  PLEDGE
-  RECIEVED
+  PLEDGED
+  RECEIVED
 }
 
 model User {
@@ -88,7 +88,7 @@ model Donation {
   donorName   String
   amountKobo  BigInt
   paymentMode PaymentMode
-  status      DonationStatus @default(RECIEVED)
+  status      DonationStatus @default(RECEIVED)
   needsReview Boolean        @default(false)
   note        String?
   version     Int            @default(1)
