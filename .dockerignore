@@ -1,0 +1,20 @@
+# Keep the build context small and secrets out of the image.
+node_modules
+dist
+src/generated
+.env
+.env.*
+!.env.example
+.git
+.github
+.claude
+.agents
+.windsurf
+.vscode
+scripts
+*.md
+*.log
+Dockerfile
+.dockerignore
+render.yaml
+docker-compose.yaml

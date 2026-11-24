@@ -1,0 +1,95 @@
+# Render Blueprint: staging + production for the Ovation API.
+# Apply once in the Render dashboard: New -> Blueprint -> pick this repo.
+# Spec: https://render.com/docs/blueprint-spec
+#
+#   staging    branch `staging` -> https://ovation-api-staging.onrender.com  (frontend development)
+#   production branch `main`    -> https://ovation-api.onrender.com          (real events)
+#
+# Each deploys automatically after GitHub CI passes on its branch. Database migrations run
+# when the container starts (see Dockerfile). Values marked `sync: false` are asked for once,
+# when the Blueprint is first applied; change them later under the service's Environment tab.
+
+services:
+  # ---------- staging ----------
+  - type: web
+    name: ovation-api-staging
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: frankfurt
+    plan: free # sleeps after 15 min idle, ~1 min to wake; fine for frontend development
+    branch: staging
+    autoDeployTrigger: checksPass
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ovation-db-staging
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false # e.g. http://localhost:3000 (add the staging frontend URL later, comma-separated)
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DOCS_ENABLED
+        value: "true"
+      - key: SDK_DOWNLOAD_ENABLED
+        value: "true" # the frontend repo pulls its SDK from staging
+      - key: OBSERVE_SERVICE_ID
+        value: ovation-api-staging
+      - key: OBSERVE_APP_KEY
+        sync: false
+      - key: OBSERVE_APP_SECRET
+        sync: false
+
+  # ---------- production ----------
+  - type: web
+    name: ovation-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: frankfurt
+    plan: 0.5c-512mb # smallest always-on instance
+    branch: main
+    autoDeployTrigger: checksPass
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ovation-db
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false # the production frontend URL, e.g. https://app.example.com
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DOCS_ENABLED
+        value: "false"
+      - key: SDK_DOWNLOAD_ENABLED
+        value: "false"
+      - key: OBSERVE_SERVICE_ID
+        value: ovation-api
+      - key: OBSERVE_APP_KEY
+        sync: false
+      - key: OBSERVE_APP_SECRET
+        sync: false
+
+databases:
+  # Free Render Postgres is deleted after 30 days, so both use the smallest paid plan.
+  - name: ovation-db-staging
+    databaseName: ovation
+    region: frankfurt
+    plan: 0.1c-256mb
+    postgresMajorVersion: "17"
+    ipAllowList: [] # reachable only from Render services, not the internet
+
+  - name: ovation-db
+    databaseName: ovation
+    region: frankfurt
+    plan: 0.1c-256mb
+    postgresMajorVersion: "17"
+    ipAllowList: []

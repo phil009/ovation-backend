@@ -1,4 +1,5 @@
 services:
+  # Local Postgres for development: `docker compose up -d`
   db:
     image: postgres:17
     container_name: ovation-db
@@ -11,6 +12,41 @@ services:
       - "15432:5432"
     volumes:
       - ovation_pgdata:/var/lib/postgresql/data
+
+  # ---- Production-like run of the real image: `docker compose --profile app up --build` ----
+  # Uses its own database (ovation_container) so it starts empty and runs every migration,
+  # exactly like a fresh Render deploy. API on http://localhost:5001/api
+
+  db-init:
+    image: postgres:17
+    profiles: [app]
+    depends_on: [db]
+    environment:
+      PGPASSWORD: ovation_dev
+    entrypoint:
+      - sh
+      - -c
+      - >
+        until pg_isready -h db -U ovation; do sleep 1; done;
+        psql -h db -U ovation -d ovation -tAc "SELECT 1 FROM pg_database WHERE datname = 'ovation_container'" | grep -q 1
+        || psql -h db -U ovation -d ovation -c "CREATE DATABASE ovation_container"
+
+  api:
+    build: .
+    profiles: [app]
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://ovation:ovation_dev@db:5432/ovation_container
+      JWT_ACCESS_SECRET: local-container-only-secret-not-for-real-use-0123456789
+      CORS_ORIGINS: http://localhost:3000
+      DOCS_ENABLED: "false"
+      SDK_DOWNLOAD_ENABLED: "false"
+      OBSERVE_ENABLED: "false"
+    ports:
+      - "5001:5000"
 
 volumes:
   ovation_pgdata:

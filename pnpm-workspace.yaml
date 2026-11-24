@@ -1,2 +1,10 @@
 ignoredBuiltDependencies:
+  - '@scarf/scarf'
   - esbuild
+
+# Packages allowed to run install scripts (pnpm 10 blocks them by default).
+# Listed here, not just approved locally, so fresh installs in Docker and CI work too.
+onlyBuiltDependencies:
+  - '@prisma/engines'
+  - argon2
+  - prisma
