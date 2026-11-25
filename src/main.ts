@@ -4,10 +4,17 @@ import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule, type OpenAPIObject } from '@nestjs/swagger';
 import helmet from 'helmet';
+import { createRequire } from 'node:module';
 import { AppModule } from './app.module.js';
 import { ObserveInstrument } from './observe.js';
 import { setOpenApiDocument } from './modules/sdk/openapi-store.js';
 import { ErrorResponseDto } from './common/dto/error-response.dto.js';
+
+/**
+ * The API contract's version: package.json "version". Bump it on every contract change, so the
+ * SDK download (ovation-sdk-<version>.zip) and the frontend's `pnpm sdk:pull` show the change.
+ */
+const { version: API_VERSION } = createRequire(import.meta.url)('../package.json') as { version: string };
 
 /**
  * Every endpoint can fail (400, 401, 403, 404, 429...), always with the same body. Documenting it as
@@ -52,7 +59,7 @@ async function bootstrap() {
 
   const document = SwaggerModule.createDocument(
     app,
-    new DocumentBuilder().setTitle('Ovation API').setVersion('0.2.0').addBearerAuth().build(),
+    new DocumentBuilder().setTitle('Ovation API').setVersion(API_VERSION).addBearerAuth().build(),
     { extraModels: [ErrorResponseDto] },
   );
   addDefaultErrorResponses(document);

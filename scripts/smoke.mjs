@@ -3,6 +3,8 @@
 // It registers its own throwaway users (*@smoke.test) and organisations each run.
 // Point it elsewhere with API_URL=http://host:port/api. Never run it against production.
 import ExcelJS from 'exceljs';
+import pg from 'pg';
+import { createHash } from 'node:crypto';
 
 const B = process.env.API_URL ?? `http://localhost:${process.env.PORT ?? 5000}/api`;
 let pass = 0, fail = 0;
@@ -28,6 +30,20 @@ async function register(name) {
   return { ...r.json, status: r.status, email, token: r.json.accessToken, id: r.json.user?.id };
 }
 const statuses = (rs) => rs.map((r) => r.status).join(',');
+
+// Some checks need time to pass (the 2-minute refresh window, the 10-minute undo window). They
+// back-date rows directly, so they run only against the local API and its own DATABASE_URL.
+const db = process.env.DATABASE_URL && !process.env.API_URL
+  ? new pg.Client({ connectionString: process.env.DATABASE_URL.split('?')[0] })
+  : null;
+if (db) await db.connect();
+else console.log('NOTE  API_URL is set or DATABASE_URL is missing: skipping the back-dated checks');
+const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+// The columns are timestamp without time zone, holding UTC (Prisma). Do the arithmetic in SQL,
+// in UTC: a JS Date would be written in this machine's local time.
+const AGO = `(now() AT TIME ZONE 'UTC') - make_interval(mins => $1)`;
+const backdateToken = (token, minutes) =>
+  db.query(`UPDATE refresh_tokens SET "revokedAt" = ${AGO} WHERE "tokenHash" = $2`, [minutes, sha256(token)]);
 
 // ───────────── 1. accounts ─────────────
 const A = await register('Admin');
@@ -88,6 +104,17 @@ check('delete donation -> 204', (await call('DELETE', `/donations/${d2}`, { toke
 check('deleted donation -> 404', (await call('GET', `/donations/${d2}`, { token: T })).status === 404);
 const list = await call('GET', `/donations?eventId=${E}&limit=10`, { token: T });
 check('list -> 2 live donations', list.json.total === 2, list.raw.slice(0, 120));
+const gen = await call('GET', `/donations?eventId=${E}&general=true`, { token: T });
+check('list general=true -> only the general donation', gen.json.total === 1 && gen.json.items?.[0]?.id === d3, gen.raw.slice(0, 160));
+check('list with general and awardeeId -> 400', (await call('GET', `/donations?eventId=${E}&general=true&awardeeId=${A1}`, { token: T })).status === 400);
+const desc = await call('GET', `/donations?eventId=${E}&order=desc`, { token: T });
+const asc = await call('GET', `/donations?eventId=${E}&order=asc`, { token: T });
+check('list order=desc is the reverse of asc', desc.json.items?.map((d) => d.id).join() === asc.json.items?.map((d) => d.id).reverse().join(), desc.raw.slice(0, 160));
+const search = await call('GET', `/donations?eventId=${E}&q=OKAF`, { token: T });
+check('list q= searches donor names, any case', search.json.total === 1 && search.json.items?.[0]?.id === d1, search.raw.slice(0, 160));
+const names = await call('GET', `/events/${E}/donor-names`, { token: T });
+check('donor-names -> distinct live names, sorted', JSON.stringify(names.json.names) === JSON.stringify(['For all awardees', 'Mrs Okafor']), names.raw);
+check('event name over 200 characters -> 400', (await call('POST', `/orgs/${O}/events`, { token: T, body: { name: 'x'.repeat(201), date: '2026-11-08' } })).status === 400);
 check('close event -> 200', (await call('PATCH', `/events/${E}/close`, { token: T })).status === 200);
 check('write to closed event -> 409', (await call('POST', '/donations', { token: T, body: { ...batch.donations[0], id: crypto.randomUUID() } })).status === 409);
 check('reopen event -> 200', (await call('PATCH', `/events/${E}/reopen`, { token: T })).status === 200);
@@ -125,7 +152,17 @@ check('race: 5 accept a single-use code at once -> one 201, four 410', joins.fil
 const winner = racers[joins.findIndex((r) => r.status === 201)];
 
 // ───────────── 5. roles inside the org ─────────────
-check('editor deleting a donation -> 403', (await call('DELETE', `/donations/${d3}`, { token: Bu.token })).status === 403);
+check("editor deleting an admin's donation -> 403", (await call('DELETE', `/donations/${d3}`, { token: Bu.token })).status === 403);
+const own = crypto.randomUUID();
+await call('POST', '/donations', { token: Bu.token, body: { id: own, eventId: E, donorName: 'Editor slip', amountKobo: '100000', paymentMode: 'CASH' } });
+check('editor undoing their own new donation -> 204', (await call('DELETE', `/donations/${own}`, { token: Bu.token })).status === 204);
+if (db) {
+  const old = crypto.randomUUID();
+  await call('POST', '/donations', { token: Bu.token, body: { id: old, eventId: E, donorName: 'Editor old', amountKobo: '100000', paymentMode: 'CASH' } });
+  await db.query(`UPDATE donations SET "createdAt" = ${AGO} WHERE id = $2`, [11, old]);
+  check('editor deleting their own donation after 10 minutes -> 403', (await call('DELETE', `/donations/${old}`, { token: Bu.token })).status === 403);
+  check('admin can still delete it -> 204', (await call('DELETE', `/donations/${old}`, { token: T })).status === 204);
+}
 check('editor creating an awardee -> 201', (await call('POST', `/events/${E}/awardees`, { token: Bu.token, body: { name: 'Editor Awardee' } })).status === 201);
 check('editor adding a donation -> 201', (await call('POST', '/donations', { token: Bu.token, body: { id: crypto.randomUUID(), eventId: E, donorName: 'Via editor', amountKobo: '100000', paymentMode: 'CASH' } })).status === 201);
 check('viewer creating an awardee -> 403', (await call('POST', `/events/${E}/awardees`, { token: Cu.token, body: { name: 'Nope' } })).status === 403);
@@ -227,6 +264,20 @@ check('old sessions ended after password change', (await call('POST', '/auth/ref
 check('old password -> 401, new password -> 201',
   (await call('POST', '/auth/login', { body: { email: P.email, password: PW } })).status === 401 &&
   (await call('POST', '/auth/login', { body: { email: P.email, password: 'new-pass-456' } })).status === 201);
+if (db) {
+  // Phone B was signed out by the password change on phone A. Minutes later it opens the app and
+  // refreshes with its old token: a plain 401, and phone A's new session must survive.
+  await backdateToken(P.refreshToken, 3);
+  check('old token after a password change, 3 min later -> 401', (await call('POST', '/auth/refresh', { body: { refreshToken: P.refreshToken } })).status === 401);
+  const phoneA = await call('POST', '/auth/refresh', { body: { refreshToken: pc.json.refreshToken } });
+  check("...and doesn't end the new session (no false theft alarm)", phoneA.status === 201, phoneA.raw);
+  // Control: a token replaced by a refresh and reused 3 minutes later still counts as theft.
+  const T1 = await register('Thief');
+  const rot = (await call('POST', '/auth/refresh', { body: { refreshToken: T1.refreshToken } })).json;
+  await backdateToken(T1.refreshToken, 3);
+  check('rotated token reused after 3 min -> 401', (await call('POST', '/auth/refresh', { body: { refreshToken: T1.refreshToken } })).status === 401);
+  check('...and every session of that user ends (theft)', (await call('POST', '/auth/refresh', { body: { refreshToken: rot.refreshToken } })).status === 401);
+}
 
 // ───────────── 11. Excel export ─────────────
 await call('POST', '/donations', { token: T, body: { id: crypto.randomUUID(), eventId: E, awardeeId: A1, donorName: 'Hard to read', amountKobo: '1500000', paymentMode: 'CASH', needsReview: true, note: 'amount unclear: 15k or 75k?' } });
@@ -272,5 +323,6 @@ const zip = Buffer.from(await sdk.arrayBuffer());
 check(expectSdk ? 'SDK zip -> 200' : 'SDK download switched off -> 404',
   expectSdk ? sdk.status === 200 && zip.subarray(0, 2).toString() === 'PK' : sdk.status === 404, `${sdk.status} ${zip.length} bytes`);
 
+await db?.end();
 console.log(`\n${pass} passed, ${fail} failed. Org ${O}, event ${E}`);
 process.exitCode = fail > 0 ? 1 : 0; // non-zero exit so CI or scripts can tell it failed

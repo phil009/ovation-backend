@@ -7,7 +7,7 @@ export class CreateAwardeeDto {
   @ApiPropertyOptional({ description: 'Number from the notebook', example: 1 })
   @IsOptional() @IsInt() @Min(0) number?: number;
 
-  @ApiProperty({ example: 'Chief Emeka Obi' })
+  @ApiProperty({ example: 'Chief Emeka Obi', minLength: 1, maxLength: 200 })
   @IsString() @MinLength(1) @MaxLength(200) name: string;
 
   @ApiPropertyOptional({ description: "Awardee's own donation in kobo, as a digit string", example: '300000000', pattern: KOBO_ZERO_OK.source })

@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { Donation, Prisma } from '../../generated/prisma/client.js';
-import { DonationStatus, PaymentMode } from '../../generated/prisma/enums.js';
+import { DonationStatus, PaymentMode, Role } from '../../generated/prisma/enums.js';
+import { hasRole } from '../../common/access/roles.js';
 import { lockRow } from '../../prisma/lock.js';
 import { EventsService } from '../events/events.service.js';
 import { AwardeesService } from '../awardees/awardees.service.js';
@@ -20,6 +21,10 @@ const select = {
 
 /** What the API returns: the full row (which the audit log keeps) without deletedAt. */
 const toPublic = ({ deletedAt: _deletedAt, ...rest }: Donation) => rest;
+
+/** How long an editor may delete (undo) a donation they created themselves. Admins: always. */
+export const OWN_DELETE_WINDOW_MINUTES = 10;
+const OWN_DELETE_WINDOW_MS = OWN_DELETE_WINDOW_MINUTES * 60 * 1000;
 
 const defaultStatus = (mode: PaymentMode) =>
   mode === PaymentMode.PLEDGE ? DonationStatus.PLEDGED : DonationStatus.RECEIVED;
@@ -107,19 +112,35 @@ export class DonationsService {
   }
 
   async list(q: ListDonationsQuery) {
+    if (q.awardeeId && q.general) throw new BadRequestException('Use either awardeeId or general, not both');
     const where: Prisma.DonationWhereInput = { eventId: q.eventId, deletedAt: null };
     if (q.awardeeId) where.awardeeId = q.awardeeId;
+    if (q.general) where.awardeeId = null;
+    const search = q.q?.trim();
+    if (search) where.donorName = { contains: search, mode: 'insensitive' };
     const [items, total] = await this.prisma.$transaction([
       this.prisma.donation.findMany({
         where,
         select,
-        orderBy: { createdAt: 'asc' },
+        // id breaks ties, so paging is stable when donations share a timestamp (batch imports).
+        orderBy: [{ createdAt: q.order ?? 'asc' }, { id: q.order ?? 'asc' }],
         take: q.limit ?? 100,
         skip: q.offset ?? 0,
       }),
       this.prisma.donation.count({ where }),
     ]);
     return { items, total };
+  }
+
+  /** Distinct donor names at an event, sorted, for autocomplete. */
+  async donorNames(eventId: string) {
+    const rows = await this.prisma.donation.findMany({
+      where: { eventId, deletedAt: null },
+      distinct: ['donorName'],
+      select: { donorName: true },
+      orderBy: { donorName: 'asc' },
+    });
+    return { names: rows.map((r) => r.donorName) };
   }
 
   async get(id: string) {
@@ -160,10 +181,23 @@ export class DonationsService {
     });
   }
 
-  async remove(id: string, userId: string) {
+  /**
+   * Soft delete. Admins can delete any donation. Editors only their own, and only within
+   * OWN_DELETE_WINDOW_MINUTES of creating it: an Undo for a slip, not a way to rewrite totals.
+   */
+  async remove(id: string, userId: string, role: Role) {
     await this.prisma.$transaction(async (tx) => {
       await lockRow(tx, 'Donation', id);
       const before = await this.findLiveRow(id, tx);
+      if (!hasRole(role, Role.ADMIN)) {
+        const own = before.createdById === userId;
+        const recent = Date.now() - before.createdAt.getTime() <= OWN_DELETE_WINDOW_MS;
+        if (!own || !recent) {
+          throw new ForbiddenException(
+            `Only an admin can delete this donation. Editors can undo their own entries for ${OWN_DELETE_WINDOW_MINUTES} minutes.`,
+          );
+        }
+      }
       const event = await this.events.assertOpen(before.eventId, tx);
       const after = await tx.donation.update({
         where: { id },

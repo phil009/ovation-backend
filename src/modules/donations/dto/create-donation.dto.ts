@@ -13,7 +13,7 @@ export class CreateDonationDto {
   @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true, description: 'Leave out (or null) for a general donation to all awardees' })
   @IsOptional() @IsUUID('all') awardeeId?: string | null;
 
-  @ApiProperty({ example: 'Mrs Ngozi Okafor' })
+  @ApiProperty({ example: 'Mrs Ngozi Okafor', minLength: 1, maxLength: 200 })
   @IsString() @MinLength(1) @MaxLength(200) donorName: string;
 
   @ApiProperty({ description: 'Kobo as a digit string', example: '5000000', pattern: KOBO_POSITIVE.source })
@@ -28,6 +28,6 @@ export class CreateDonationDto {
   @ApiPropertyOptional({ description: 'Flag a hard-to-read or doubtful entry' })
   @IsOptional() @IsBoolean() needsReview?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ maxLength: 500 })
   @IsOptional() @IsString() @MaxLength(500) note?: string;
 }

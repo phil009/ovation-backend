@@ -1,17 +1,18 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import {
-  ApiBearerAuth, ApiConflictResponse, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiTags,
+  ApiBearerAuth, ApiConflictResponse, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
 import { Role } from '../../generated/prisma/enums.js';
 import { From, OrgAccess } from '../../common/access/org-access.decorator.js';
-import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
+import { CurrentMembership, CurrentUser } from '../../common/decorators/current-user.decorator.js';
+import type { RequestMembership } from '../../common/access/org-access.guard.js';
 import type { AuthUser } from '../../common/decorators/current-user.decorator.js';
-import { DonationsService } from './donations.service.js';
+import { DonationsService, OWN_DELETE_WINDOW_MINUTES } from './donations.service.js';
 import { CreateDonationDto } from './dto/create-donation.dto.js';
 import { BatchDonationsDto, BatchResultDto } from './dto/batch-donations.dto.js';
 import { UpdateDonationDto } from './dto/update-donation.dto.js';
 import { ListDonationsQuery } from './dto/list-donations.query.js';
-import { DonationDto, DonationListDto } from './dto/donation.dto.js';
+import { DonationDto, DonationListDto, DonorNamesDto } from './dto/donation.dto.js';
 
 
 @ApiTags('donations')
@@ -46,8 +47,30 @@ export class DonationsController {
     return this.donations.update(id, dto, user.id);
   }
 
-  @OrgAccess(Role.ADMIN, From.donationParam()) @Delete(':id') @HttpCode(204) @ApiNoContentResponse()
-  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
-    return this.donations.remove(id, user.id);
+  @OrgAccess(Role.EDITOR, From.donationParam()) @Delete(':id') @HttpCode(204)
+  @ApiOperation({
+    summary: 'Delete a donation (soft delete)',
+    description: `Admins can delete any donation. Editors can delete a donation they created themselves, within ${OWN_DELETE_WINDOW_MINUTES} minutes of creating it (an Undo). Otherwise 403. The event must be open (409).`,
+  })
+  @ApiNoContentResponse()
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthUser,
+    @CurrentMembership() membership: RequestMembership,
+  ) {
+    return this.donations.remove(id, user.id, membership.role);
+  }
+}
+
+/** Donation data looked up by event: /events/:eventId/... */
+@ApiTags('donations')
+@ApiBearerAuth()
+@Controller('events/:eventId')
+export class EventDonationsController {
+  constructor(private donations: DonationsService) {}
+
+  @OrgAccess(Role.VIEWER, From.eventParam('eventId')) @Get('donor-names') @ApiOkResponse({ type: DonorNamesDto })
+  donorNames(@Param('eventId', ParseUUIDPipe) eventId: string) {
+    return this.donations.donorNames(eventId);
   }
 }

@@ -17,6 +17,10 @@ export class DonationDto {
   @ApiProperty({ type: String, format: 'date-time' }) updatedAt: Date;
 }
 
+export class DonorNamesDto {
+  @ApiProperty({ type: String, isArray: true, description: 'Distinct donor names, sorted' }) names: string[];
+}
+
 export class DonationListDto {
   @ApiProperty({ type: DonationDto, isArray: true }) items: DonationDto[];
   @ApiProperty() total: number;
