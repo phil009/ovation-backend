@@ -27,8 +27,8 @@ export class AuditEntryDto {
   @ApiProperty({ example: 'UPDATE' }) action: string;
   @ApiProperty({ enum: ENTITIES }) entity: string;
   @ApiProperty() entityId: string;
-  @ApiProperty({ type: Object, nullable: true, description: 'Row before the change (null for creates)' }) before: unknown;
-  @ApiProperty({ type: Object, nullable: true, description: 'Row after the change' }) after: unknown;
+  @ApiProperty({ type: 'object', additionalProperties: true, nullable: true, description: 'Row before the change (null for creates)' }) before: Record<string, unknown> | null;
+  @ApiProperty({ type: 'object', additionalProperties: true, nullable: true, description: 'Row after the change' }) after: Record<string, unknown> | null;
   @ApiProperty({ type: String, format: 'date-time' }) createdAt: Date;
   @ApiProperty({ type: AuditUserDto }) user: AuditUserDto;
 }

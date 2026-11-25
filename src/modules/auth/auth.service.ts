@@ -50,7 +50,8 @@ type UserRow = { id: string; email: string; name: string };
  *   used yet, the same replacement comes back (with a fresh access token). So a refresh whose
  *   response got lost can simply be retried.
  * - theft: if an old, already-replaced token shows up later than that, someone may have stolen
- *   it, so every session of that user is revoked.
+ *   it, so every session of that user is revoked. Only tokens revoked by rotation count: one
+ *   ended by logout, logout-all or a password change just gets a 401.
  */
 @Injectable()
 export class AuthService {
@@ -116,6 +117,10 @@ export class AuthService {
 
             // Already used. A retry within the grace window gets the same, still unused, replacement.
             const spent = await tx.refreshToken.findUniqueOrThrow({ where: { id: row.id }, include: { replacedBy: true } });
+            // Revoked without a replacement: ended by logout, logout-all or a password change, not by
+            // a refresh. Reusing it says nothing about theft, so it is a plain 401 (other sessions,
+            // such as the new one after a password change, stay signed in).
+            if (!spent.replacedById) return { kind: 'invalid' as const };
             const revokedAt = spent.revokedAt ?? now;
             if (now.getTime() - revokedAt.getTime() > REUSE_GRACE_MS) {
                 return { kind: 'stolen' as const, userId: row.userId };

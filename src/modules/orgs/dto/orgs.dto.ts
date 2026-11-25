@@ -5,7 +5,7 @@ import { Role } from '../../../generated/prisma/enums.js';
 // ---- organisations ----
 
 export class CreateOrgDto {
-  @ApiProperty({ example: 'Umuoji Town Union, Lagos branch' })
+  @ApiProperty({ example: 'Umuoji Town Union, Lagos branch', minLength: 2, maxLength: 120 })
   @IsString() @MinLength(2) @MaxLength(120) name: string;
 }
 
@@ -48,7 +48,7 @@ export class CreateInviteDto {
 }
 
 export class AcceptInviteDto {
-  @ApiProperty({ example: 'OVN-7K2P-QX9M', description: 'Case, spaces and dashes are ignored' })
+  @ApiProperty({ example: 'OVN-7K2P-QX9M', description: 'Case, spaces and dashes are ignored', maxLength: 40 })
   @IsString() @MaxLength(40) code: string;
 }
 
